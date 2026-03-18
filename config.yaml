@@ -1,0 +1,11 @@
+max_turns: 3
+claude_role: strategic_reviewer
+codex_role: implementation_reviewer
+transcript_file: logs/transcript.jsonl
+events_file: logs/events.log
+state_file: run/relay_state.json
+task_file: workspace/task.md
+shared_context_file: workspace/shared_context.md
+decisions_file: workspace/decisions.md
+human_note_file: workspace/human_note.md
+final_summary_file: workspace/final_summary.md

@@ -1,0 +1,7 @@
+{
+  "current_turn": 3,
+  "status": "stopped",
+  "last_agent": null,
+  "converged": false,
+  "stop_reason": "max_turns"
+}
