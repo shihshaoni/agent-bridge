@@ -148,6 +148,14 @@ def has_stop_signal(human_note: str) -> bool:
     lines = [line.strip() for line in human_note.splitlines()]
     return "STOP" in lines
 
+def main() -> None:
+    transcript_path = (LOGS / "transcript.jsonl").resolve()
+
+    print("\n========== RELAY START ==========", flush=True)
+    print(f"[relay] transcript file: {transcript_path}", flush=True)
+    print("=================================\n", flush=True)
+
+    task = read_text(WORKSPACE / "task.md").strip()
 
 def main():
     task = read_text(WORKSPACE / "task.md").strip()
