@@ -1,5 +1,6 @@
 # Task
-I want to travel to Japan, give me some advices.
+
+哪一款自動車CP值最高？
 
 Constraints:
 - Keep the answer practical

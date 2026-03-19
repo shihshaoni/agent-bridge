@@ -3,25 +3,21 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
-cat > "$ROOT/workspace/decisions.md" <<'EOD'
-# Decisions
+echo "[reset] resetting runtime state..."
 
-No decisions yet.
-EOD
-
-cat > "$ROOT/workspace/human_note.md" <<'EOD'
-# Human Note
-
-Leave empty unless you want to guide the next round.
-Write STOP on a line by itself to stop the relay.
-EOD
-
+# logs
+mkdir -p "$ROOT/logs"
 : > "$ROOT/logs/transcript.jsonl"
-: > "$ROOT/logs/events.log"
 
-rm -f \
-  "$ROOT/workspace/final_summary.md" \
-  "$ROOT/run/relay_state.json" \
-  "$ROOT"/run/*_prompt.txt
+# workspace (保留 task.md)
+mkdir -p "$ROOT/workspace"
+: > "$ROOT/workspace/decisions.md"
+: > "$ROOT/workspace/final_summary.md"
+: > "$ROOT/workspace/human_note.md"
 
-echo "Task state reset complete."
+# run artifacts
+rm -rf "$ROOT/run"
+mkdir -p "$ROOT/run"
+
+echo "[reset] done"
+echo "[reset] task.md preserved"

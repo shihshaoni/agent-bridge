@@ -11,6 +11,7 @@ SCRIPTS = ROOT / "scripts"
 
 MAX_TURNS = 3  # TODO: wire config.yaml later
 
+
 def now():
     return datetime.now().astimezone().isoformat()
 
@@ -73,7 +74,13 @@ def truncate(text: str, limit: int = 1200) -> str:
     return text[:limit] + "\n...[truncated]"
 
 
-def build_claude_prompt(task: str, shared: str, decisions: str, human_note: str, codex_feedback: str | None) -> str:
+def build_claude_prompt(
+    task: str,
+    shared: str,
+    decisions: str,
+    human_note: str,
+    codex_feedback: str | None,
+) -> str:
     extra = f"\nLatest Codex feedback:\n{codex_feedback}\n" if codex_feedback else ""
     note = f"\nHuman note:\n{human_note}\n" if human_note.strip() else ""
     return f"""You are acting as a strategic reviewer.
@@ -99,7 +106,13 @@ Keep it concrete and concise.
 """
 
 
-def build_codex_prompt(task: str, shared: str, decisions: str, human_note: str, claude_output: str) -> str:
+def build_codex_prompt(
+    task: str,
+    shared: str,
+    decisions: str,
+    human_note: str,
+    claude_output: str,
+) -> str:
     note = f"\nHuman note:\n{human_note}\n" if human_note.strip() else ""
     return f"""You are acting as an implementation-oriented reviewer.
 
@@ -126,7 +139,75 @@ Keep it concrete and concise.
 """
 
 
-def summarize_round(turn: int, previous: str, claude_output: str, codex_output: str) -> str:
+def build_gemini_prompt(
+    task: str,
+    shared: str,
+    decisions: str,
+    human_note: str,
+    claude_output: str,
+    codex_output: str,
+) -> str:
+    note = f"\nHuman note:\n{human_note}\n" if human_note.strip() else ""
+    return f"""You are acting as a reviewer.
+
+Task:
+{task}
+
+Shared Context:
+{shared}
+
+Current Decisions:
+{decisions}
+{note}
+
+Claude's output:
+{claude_output}
+
+Codex's output:
+{codex_output}
+
+Please answer in this structure:
+1. What both agents agree on
+2. What they disagree on
+3. What is weak or unsupported
+4. Whether another turn is necessary
+5. The single most important next question
+
+Keep it concrete and concise.
+"""
+
+
+def build_final_agent_answer_prompt(task: str, shared: str, decisions: str, agent_name: str) -> str:
+    return f"""You are {agent_name}.
+
+Task:
+{task}
+
+Shared Context:
+{shared}
+
+Accumulated Decisions:
+{decisions}
+
+Please give a direct final answer to the task.
+
+Requirements:
+1. Answer the task directly
+2. Do not describe the multi-agent process
+3. Do not mention relay, rounds, or other agents
+4. Keep it concise
+5. Use markdown
+6. Prefer one short paragraph or a short bullet list
+"""
+
+
+def summarize_round(
+    turn: int,
+    previous: str,
+    claude_output: str,
+    codex_output: str,
+    gemini_output: str,
+) -> str:
     section = f"""
 
 ## Round {turn}
@@ -136,17 +217,21 @@ def summarize_round(turn: int, previous: str, claude_output: str, codex_output: 
 
 ### Codex
 {truncate(codex_output, 800)}
+
+### Gemini
+{truncate(gemini_output, 800)}
 """
     return previous.rstrip() + section + "\n"
 
 
-def converged(claude_output: str, codex_output: str) -> bool:
+def converged(claude_output: str, codex_output: str, gemini_output: str) -> bool:
     return False
 
 
 def has_stop_signal(human_note: str) -> bool:
     lines = [line.strip() for line in human_note.splitlines()]
     return "STOP" in lines
+
 
 def main() -> None:
     transcript_path = (LOGS / "transcript.jsonl").resolve()
@@ -155,9 +240,6 @@ def main() -> None:
     print(f"[relay] transcript file: {transcript_path}", flush=True)
     print("=================================\n", flush=True)
 
-    task = read_text(WORKSPACE / "task.md").strip()
-
-def main():
     task = read_text(WORKSPACE / "task.md").strip()
     shared = read_text(WORKSPACE / "shared_context.md").strip()
     decisions = read_text(WORKSPACE / "decisions.md").strip()
@@ -181,6 +263,8 @@ def main():
         }
         write_state(state)
 
+        log_event(turn, "relay", "system", "task", task)
+
         if has_stop_signal(human_note):
             stopped_reason = "human_stop"
             log_event(turn, "relay", "system", "stop", "Stopped by human note")
@@ -202,16 +286,35 @@ def main():
         codex_output = call_agent("ask_codex.sh", codex_prompt)
         log_event(turn, "codex", "relay", "response", codex_output)
 
-        decisions = summarize_round(turn, decisions, claude_output, codex_output)
+        gemini_prompt = build_gemini_prompt(
+            task,
+            shared,
+            decisions,
+            human_note,
+            truncate(claude_output, 4000),
+            truncate(codex_output, 4000),
+        )
+        log_event(turn, "relay", "gemini", "prompt", gemini_prompt)
+        state["last_agent"] = "gemini"
+        write_state(state)
+
+        gemini_output = call_agent("ask_gemini.sh", gemini_prompt)
+        log_event(turn, "gemini", "relay", "response", gemini_output)
+
+        decisions = summarize_round(turn, decisions, claude_output, codex_output, gemini_output)
         write_text(WORKSPACE / "decisions.md", decisions)
         log_event(turn, "relay", "system", "decision", f"Updated decisions for turn {turn}")
 
-        if claude_output.startswith("[ERROR") or codex_output.startswith("[ERROR"):
+        if (
+            claude_output.startswith("[ERROR")
+            or codex_output.startswith("[ERROR")
+            or gemini_output.startswith("[ERROR")
+        ):
             stopped_reason = "agent_error"
             log_event(turn, "relay", "system", "stop", "Stopped because of agent error")
             break
 
-        if converged(claude_output, codex_output):
+        if converged(claude_output, codex_output, gemini_output):
             stopped_reason = "converged"
             state["converged"] = True
             write_state(state)
@@ -223,6 +326,43 @@ def main():
     if stopped_reason is None:
         stopped_reason = "max_turns"
 
+    final_claude_prompt = build_final_agent_answer_prompt(task, shared, decisions, "Claude")
+    log_event(0, "relay", "claude", "final_prompt", final_claude_prompt)
+    final_claude_answer = call_agent("ask_claude.sh", final_claude_prompt)
+    log_event(0, "claude", "relay", "final_response", final_claude_answer)
+
+    final_codex_prompt = build_final_agent_answer_prompt(task, shared, decisions, "Codex")
+    log_event(0, "relay", "codex", "final_prompt", final_codex_prompt)
+    final_codex_answer = call_agent("ask_codex.sh", final_codex_prompt)
+    log_event(0, "codex", "relay", "final_response", final_codex_answer)
+
+    final_gemini_prompt = build_final_agent_answer_prompt(task, shared, decisions, "Gemini")
+    log_event(0, "relay", "gemini", "final_prompt", final_gemini_prompt)
+    final_gemini_answer = call_agent("ask_gemini.sh", final_gemini_prompt)
+    log_event(0, "gemini", "relay", "final_response", final_gemini_answer)
+
+    if final_claude_answer.startswith("[ERROR"):
+        final_claude_answer = "Failed to generate final Claude answer."
+
+    if final_codex_answer.startswith("[ERROR"):
+        final_codex_answer = "Failed to generate final Codex answer."
+
+    if final_gemini_answer.startswith("[ERROR"):
+        final_gemini_answer = "Failed to generate final Gemini answer."
+
+    final_answers = f"""# Final Agent Answers
+
+## Claude
+{final_claude_answer}
+
+## Codex
+{final_codex_answer}
+
+## Gemini
+{final_gemini_answer}
+"""
+    write_text(WORKSPACE / "final_answers.md", final_answers)
+
     final_summary = f"""# Final Summary
 
 ## Task
@@ -233,6 +373,8 @@ def main():
 
 ## Decisions
 {decisions}
+
+{final_answers}
 """
     write_text(WORKSPACE / "final_summary.md", final_summary)
 
